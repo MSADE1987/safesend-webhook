@@ -4,15 +4,21 @@ from email.mime.text import MIMEText
 
 app = Flask(__name__)
 
-API_KEY = "Your_SafeSend_API_Key"  # Must match SafeSend Developer Section
-LOCAL_FOLDER = "/opt/render/project/src/signed_returns"  # Render storage path
+# Environment / Config
+API_KEY = "Your_SafeSend_API_Key"  # Change or set as Render environment variable
+LOCAL_FOLDER = "/opt/render/project/src/signed_returns"  # Storage path in Render
 SAFESEND_BASE_URL = "https://api.safesendreturns.com/v1"
 EMAIL_FROM = "noreply@yourfirm.com"
 EMAIL_TO = ["team@yourfirm.com"]
 SMTP_SERVER = "smtp.yourfirm.com"
 
-@app.route("/safesend-return", methods=["POST"])
+@app.route("/safesend-return", methods=["GET", "POST"])
 def safesend_return():
+    # Handle SafeSend "Test Connection" requests
+    if request.method == "GET":
+        return "SafeSend Webhook is Live", 200
+
+    # Handle webhook POST events
     if request.headers.get("Authorization") != API_KEY:
         return "Unauthorized", 401
 
@@ -21,23 +27,26 @@ def safesend_return():
     return_id = data.get("returnId")
 
     if event_code in [3, 11] and return_id:
+        # Download the signed return PDF
         download_url = f"{SAFESEND_BASE_URL}/returns/{return_id}/signed"
         pdf_response = requests.get(download_url, headers={"Authorization": API_KEY})
-        
+
         if pdf_response.status_code == 200:
             os.makedirs(LOCAL_FOLDER, exist_ok=True)
             file_path = os.path.join(LOCAL_FOLDER, f"{return_id}.pdf")
             with open(file_path, "wb") as f:
                 f.write(pdf_response.content)
-            
-            # Send email
+
+            # Send notification email
             msg = MIMEText(f"Signed return saved at: {file_path}")
             msg["Subject"] = "SafeSend Signed Return"
             msg["From"] = EMAIL_FROM
             msg["To"] = ", ".join(EMAIL_TO)
-            
+
             with smtplib.SMTP(SMTP_SERVER) as smtp:
                 smtp.send_message(msg)
+
+            return "OK", 200
         else:
             return "Download failed", 500
 
