@@ -1,56 +1,40 @@
-from flask import Flask, request
-import requests, os, smtplib
-from email.mime.text import MIMEText
+from flask import Flask, request, jsonify
+import os
+import logging
+from datetime import datetime
 
 app = Flask(__name__)
 
-# Environment / Config
-API_KEY = "Your_SafeSend_API_Key"  # Change or set as Render environment variable
-LOCAL_FOLDER = "/opt/render/project/src/signed_returns"  # Storage path in Render
-SAFESEND_BASE_URL = "https://api.safesendreturns.com/v1"
-EMAIL_FROM = "noreply@yourfirm.com"
-EMAIL_TO = ["team@yourfirm.com"]
-SMTP_SERVER = "smtp.yourfirm.com"
+# Configure logging so we can see incoming webhook requests in Render logs
+logging.basicConfig(level=logging.INFO)
 
-@app.route("/safesend-return", methods=["GET", "POST"])
-def safesend_return():
-    # Handle SafeSend "Test Connection" requests
-    if request.method == "GET":
-        return "SafeSend Webhook is Live", 200
+# Test connection endpoint — SafeSend will call this when you hit "Test Connection"
+@app.route("/", methods=["GET", "POST"])
+def root():
+    app.logger.info("SafeSend test connection hit")
+    return jsonify({"status": "Webhook is live"}), 200
 
-    # Handle webhook POST events
-    if request.headers.get("Authorization") != API_KEY:
-        return "Unauthorized", 401
-
+# Actual webhook endpoint SafeSend should call when a return is signed
+@app.route("/webhook", methods=["POST"])
+def safesend_webhook():
     data = request.json
-    event_code = data.get("event")
-    return_id = data.get("returnId")
+    app.logger.info(f"Received SafeSend webhook data: {data}")
 
-    if event_code in [3, 11] and return_id:
-        # Download the signed return PDF
-        download_url = f"{SAFESEND_BASE_URL}/returns/{return_id}/signed"
-        pdf_response = requests.get(download_url, headers={"Authorization": API_KEY})
+    # Save incoming data to a local file (temporary on Render's ephemeral filesystem)
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"/tmp/safesend_payload_{timestamp}.json"
+    with open(filename, "w") as f:
+        import json
+        json.dump(data, f, indent=2)
 
-        if pdf_response.status_code == 200:
-            os.makedirs(LOCAL_FOLDER, exist_ok=True)
-            file_path = os.path.join(LOCAL_FOLDER, f"{return_id}.pdf")
-            with open(file_path, "wb") as f:
-                f.write(pdf_response.content)
+    # Here is where you could later:
+    # - Download the signed return file from SafeSend's provided URL
+    # - Save to cloud or local file server
+    # - Trigger email notification
 
-            # Send notification email
-            msg = MIMEText(f"Signed return saved at: {file_path}")
-            msg["Subject"] = "SafeSend Signed Return"
-            msg["From"] = EMAIL_FROM
-            msg["To"] = ", ".join(EMAIL_TO)
-
-            with smtplib.SMTP(SMTP_SERVER) as smtp:
-                smtp.send_message(msg)
-
-            return "OK", 200
-        else:
-            return "Download failed", 500
-
-    return "OK", 200
+    return jsonify({"status": "success"}), 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    # Render automatically sets PORT environment variable
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
