@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # Environment variables (set in Render)
 SMTP_SERVER = "smtp.office365.com"
-SMTP_PORT = 587
+SMTP_PORT = 25
 SMTP_USERNAME = os.getenv("SMTP_USERNAME")  # full Microsoft 365 email
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")  # password or app password
 EMAIL_TO = os.getenv("EMAIL_TO", "").split(",")  # comma-separated list
