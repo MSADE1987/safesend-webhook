@@ -70,30 +70,20 @@ def safesend_return():
     data = request.get_json(silent=True) or {}
     print("📩 Received webhook payload:", data)
 
-    event_type   = data.get("eventType")
-    status       = data.get("status", "")
-    form_type    = data.get("formType", "")
-    tax_year     = data.get("taxYear", "")
-    client_id    = data.get("clientId", "")
-    document_id  = data.get("documentId", "")
-    document_guid= data.get("documentGuid", "")
+    event_type    = data.get("eventType")
+    status        = data.get("status") or "UNKNOWN"
+    form_type     = data.get("formType", "")
+    tax_year      = data.get("taxYear", "")
+    client_id     = data.get("clientId", "")
+    document_id   = data.get("documentId", "")
+    document_guid = data.get("documentGuid", "")
 
-    # Test Connection
+    # Handle test connection
     if event_type == 0:
         print("🔍 Test connection event received.")
         return jsonify({"message": "Test connection successful"}), 200
 
-    # Only send email for USERSIGNED
-    if status != "USERSIGNED":
-        print(f"ℹ️ Skipping email for status: {status}")
-        return jsonify({"message": "Processed (no email sent for this status)"}), 200
-
-    # Validate required fields
-    if not all([form_type, tax_year, client_id, document_id, document_guid]):
-        print("⚠️ One or more required fields are missing; skipping email.")
-        return jsonify({"message": "Processed (missing fields)"}), 200
-
-    subject = f"Client Signed Return: {client_id}"
+    subject = f"SafeSend Return Status Changed - {status}"
     body = (
         f"Status: {status}\n"
         f"Form Type: {form_type}\n"
