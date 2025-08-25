@@ -18,6 +18,9 @@ TOKEN_URL = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 SENDMAIL_URL = "https://graph.microsoft.com/v1.0/users/{sender}/sendMail"
 
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
 def get_graph_token():
     data = {
         "client_id": CLIENT_ID,
@@ -30,7 +33,7 @@ def get_graph_token():
         raise RuntimeError(f"Graph token error {r.status_code}: {r.text}")
     return r.json()["access_token"]
 
-def send_via_graph(to_emails, subject, body, attachment_bytes=None, attachment_name=None):
+def send_via_graph(to_emails, subject, body, attachments=None):
     token = get_graph_token()
 
     message = {
@@ -43,13 +46,8 @@ def send_via_graph(to_emails, subject, body, attachment_bytes=None, attachment_n
         "saveToSentItems": True,
     }
 
-    if attachment_bytes and attachment_name:
-        message["message"]["attachments"] = [{
-            "@odata.type": "#microsoft.graph.fileAttachment",
-            "name": attachment_name,
-            "contentType": "application/pdf",
-            "contentBytes": base64.b64encode(attachment_bytes).decode("utf-8"),
-        }]
+    if attachments:
+        message["message"]["attachments"] = attachments
 
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     url = SENDMAIL_URL.format(sender=GRAPH_SENDER)
@@ -61,27 +59,39 @@ def send_via_graph(to_emails, subject, body, attachment_bytes=None, attachment_n
     print(f"❌ Graph send error {r.status_code}: {r.text}")
     return False
 
+def download_file_from_sas(sas_url, filename):
+    try:
+        r = requests.get(sas_url, timeout=30)
+        if r.status_code == 200:
+            path = os.path.join(DOWNLOAD_DIR, filename)
+            with open(path, "wb") as f:
+                f.write(r.content)
+            print(f"📥 Downloaded: {filename}")
+            return path, r.content
+        else:
+            print(f"❌ Failed to download {filename}: {r.status_code}")
+    except Exception as e:
+        print(f"❌ Error downloading {filename}: {e}")
+    return None, None
+
 @app.route("/safesend-return", methods=["POST"])
 def safesend_return():
-    # Optional API key check
-    # if request.headers.get("x-api-key") != API_KEY:
-    #     return jsonify({"error": "Unauthorized"}), 401
-
     data = request.get_json(silent=True) or {}
     print("📩 Received webhook payload:", data)
 
-    event_type    = data.get("eventType")
-    status        = data.get("status") or "UNKNOWN"
-    form_type     = data.get("formType", "")
-    tax_year      = data.get("taxYear", "")
-    client_id     = data.get("clientId", "")
-    document_id   = data.get("documentId", "")
-    document_guid = data.get("documentGuid", "")
+    event_type = data.get("eventType")
 
-    # Handle test connection
     if event_type == 0:
         print("🔍 Test connection event received.")
         return jsonify({"message": "Test connection successful"}), 200
+
+    # Common data
+    status = data.get("status") or "UNKNOWN"
+    form_type = data.get("formType", "")
+    tax_year = data.get("taxYear", "")
+    client_id = data.get("clientId", "")
+    document_id = data.get("documentId", "")
+    document_guid = data.get("documentGuid", "")
 
     subject = f"SafeSend Return Status Changed - {status}"
     body = (
@@ -93,11 +103,33 @@ def safesend_return():
         f"Document GUID: {document_guid}\n"
     )
 
+    attachments = []
+
+    if event_type == 1000:
+        print("📦 Document Download Event triggered")
+
+        files = data.get("signedEFiles", []) + data.get("additionalESignedFiles", [])
+        for f in files:
+            name = f.get("fileName")
+            url = f.get("fileSAS")
+            if name and url:
+                local_path, file_bytes = download_file_from_sas(url, name)
+                if file_bytes:
+                    attachments.append({
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": name,
+                        "contentType": "application/pdf",
+                        "contentBytes": base64.b64encode(file_bytes).decode("utf-8"),
+                    })
+
+        if not files:
+            body += "\n(No documents found in payload.)"
+
     if not EMAIL_TO:
         print("⚠️ EMAIL_TO not set; skipping email.")
         return jsonify({"message": "Processed", "email": "skipped"}), 200
 
-    ok = send_via_graph(EMAIL_TO, subject, body)
+    ok = send_via_graph(EMAIL_TO, subject, body, attachments=attachments)
     return jsonify({"message": "Processed", "email": "sent" if ok else "failed"}), 200
 
 @app.route("/", methods=["GET"])
