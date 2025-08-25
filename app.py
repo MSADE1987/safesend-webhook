@@ -63,7 +63,7 @@ def send_via_graph(to_emails, subject, body, attachment_bytes=None, attachment_n
 
 @app.route("/safesend-return", methods=["POST"])
 def safesend_return():
-    # Optional API key check; uncomment to enforce
+    # Optional API key check
     # if request.headers.get("x-api-key") != API_KEY:
     #     return jsonify({"error": "Unauthorized"}), 401
 
@@ -83,7 +83,17 @@ def safesend_return():
         print("🔍 Test connection event received.")
         return jsonify({"message": "Test connection successful"}), 200
 
-    subject = f"SafeSend Return Status Changed - {status}"
+    # Only send email for USERSIGNED
+    if status != "USERSIGNED":
+        print(f"ℹ️ Skipping email for status: {status}")
+        return jsonify({"message": "Processed (no email sent for this status)"}), 200
+
+    # Validate required fields
+    if not all([form_type, tax_year, client_id, document_id, document_guid]):
+        print("⚠️ One or more required fields are missing; skipping email.")
+        return jsonify({"message": "Processed (missing fields)"}), 200
+
+    subject = f"Client Signed Return: {client_id}"
     body = (
         f"Status: {status}\n"
         f"Form Type: {form_type}\n"
